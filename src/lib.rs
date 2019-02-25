@@ -36,6 +36,10 @@ use std::cmp::max;
 use std::fmt::Display;
 use std::marker::PhantomData;
 
+/// A consolidated map that represent a list of children associated with a key.
+/// 
+/// The ConsolidatedMap is readonly and must be build using the ConsolidatedMapBuilder
+/// or by and iterator.
 pub struct ConsolidatedMap<T> {
     _t: PhantomData<T>,
     data: Vec<u32>,
@@ -103,6 +107,7 @@ impl<T> ConsolidatedMap<T> {
         )
     }
 
+    /// Returns true if a parent is contains the child.
     pub fn contains_child(&self, parent: T, child: T) -> bool
     where
         T: Into<usize>,
@@ -146,6 +151,7 @@ where
     }
 }
 
+/// An iterator for the children associated with a key.
 #[derive(Clone)]
 pub struct Children<'a, T>(::std::slice::Iter<'a, u32>, Option<T>);
 
@@ -185,6 +191,7 @@ struct Entry {
     parent: Option<u32>,
 }
 
+/// A builder pattern for the ConsolidatedMap.
 pub struct ConsolidatedMapBuilder<T> {
     _t: PhantomData<T>,
     entries: Vec<Entry>,
@@ -298,5 +305,29 @@ impl<T> ConsolidatedMapBuilder<T> {
             data,
             index,
         }
+    }
+}
+
+/// Returns an Iterator that gives all the children and the key 
+/// itself associated with a key.
+pub trait ConsolidatedBy<K> {
+    fn consolidated_by(&self, key: K) -> Children<K>;
+}
+
+impl<K, T> ConsolidatedBy<K> for &T
+where
+    T: ConsolidatedBy<K>,
+{
+    fn consolidated_by(&self, key: K) -> Children<K> {
+        (*self).consolidated_by(key)
+    }
+}
+
+impl<K> ConsolidatedBy<K> for ConsolidatedMap<K>
+where
+    K: Copy + From<usize> + Into<usize>,
+{
+    fn consolidated_by(&self, key: K) -> Children<K> {
+        (*self).consolidated(key)
     }
 }
