@@ -4,33 +4,31 @@
 //! ```
 //! use consolidated_map::ConsolidatedMapBuilder;
 //!
-//! fn main() {
-//!     let mut builder = ConsolidatedMapBuilder::new();
+//! let mut builder = ConsolidatedMapBuilder::new();
 //!
-//!     // associate the child 20 with the parent 10.
-//!     builder.insert(10usize, 20);
+//! // associate the child 20 with the parent 10.
+//! builder.insert(10usize, 20);
 //!
-//!     // associate the child 30 with the parent 20.
-//!     builder.insert(20, 30);
+//! // associate the child 30 with the parent 20.
+//! builder.insert(20, 30);
 //!
-//!     // build the ConsolidatedMap
-//!     let map = builder.build();
+//! // build the ConsolidatedMap
+//! let map = builder.build();
 //!
-//!     // the parent 10 should have the children 20 and 30.
-//!     assert_eq!(map.children(10).collect::<Vec<_>>(), vec![20, 30]);
+//! // the parent 10 should have the children 20 and 30.
+//! assert_eq!(map.children(10).collect::<Vec<_>>(), vec![20, 30]);
 //!
-//!     // the parent 20 should have the children 30.
-//!     assert_eq!(map.children(20).collect::<Vec<_>>(), vec![30]);
+//! // the parent 20 should have the children 30.
+//! assert_eq!(map.children(20).collect::<Vec<_>>(), vec![30]);
 //!
-//!     // the parent 30 does not have any children.
-//!     assert!(map.children(30).collect::<Vec<_>>().is_empty());
+//! // the parent 30 does not have any children.
+//! assert!(map.children(30).collect::<Vec<_>>().is_empty());
 //!
-//!     // consolidated children contains also the key item.
-//!     assert_eq!(map.consolidated(10).collect::<Vec<_>>(), vec![10, 20, 30]);
+//! // consolidated children contains also the key item.
+//! assert_eq!(map.consolidated(10).collect::<Vec<_>>(), vec![10, 20, 30]);
 //!
-//!     // if the item has not been inserted, the consolidated fn returns only the item.
-//!     assert_eq!(map.consolidated(5).collect::<Vec<_>>(), vec![5]);
-//! }
+//! // if the item has not been inserted, the consolidated fn returns only the item.
+//! assert_eq!(map.consolidated(5).collect::<Vec<_>>(), vec![5]);
 //! ```
 use std::cmp::max;
 use std::fmt::Display;
@@ -122,7 +120,7 @@ impl<T> ConsolidatedMap<T> {
         T: Into<usize>,
     {
         let parent = parent.into();
-        let index = *self.index.get(parent)? as usize;
+        let index = *self.index.get(parent)?;
         let len = *self.data.get(index)? as usize;
         Some(&self.data[index + 1..index + 1 + len])
     }
@@ -168,10 +166,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         match self.1.take() {
             Some(item) => Some(item),
-            None => match self.0.next() {
-                Some(u) => Some((*u as usize).into()),
-                None => None,
-            },
+            None => self.0.next().map(|u| (*u as usize).into()),
         }
     }
 
@@ -271,7 +266,7 @@ impl<T> ConsolidatedMapBuilder<T> {
                 p.children.push(child_idx as u32);
 
                 self.len += entry.children.len() + 1;
-                parent = p.parent.clone();
+                parent = p.parent;
             }
         }
     }
@@ -292,15 +287,16 @@ impl<T> ConsolidatedMapBuilder<T> {
     ///
     /// assert!(map.contains_child(1, 2));
     /// ```
-    pub fn build(self) -> ConsolidatedMap<T> {
+    pub fn build(mut self) -> ConsolidatedMap<T> {
+        update_depth(&mut self.entries);
+
         let mut data = Vec::with_capacity(self.len);
         let mut index = Vec::with_capacity(self.entries.len());
 
-        for mut entry in self.entries.into_iter() {
-            entry.children.sort_unstable();
+        for entry in self.entries.into_iter() {
             index.push(data.len());
             data.push(entry.children.len() as u32);
-            data.extend(entry.children.into_iter());
+            data.extend(entry.children);
         }
 
         ConsolidatedMap {
@@ -309,6 +305,32 @@ impl<T> ConsolidatedMapBuilder<T> {
             index,
         }
     }
+}
+
+impl<T> Default for ConsolidatedMapBuilder<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn update_depth(entries: &mut [Entry]) {
+    let read_entries = unsafe { &*(entries as *const [Entry]) };
+
+    let depth = |index: u32| {
+        let mut depth = 0u16;
+        let mut parent = Some(index);
+
+        while let Some(entry) = parent.and_then(|index| read_entries.get(index as usize)) {
+            depth += 1;
+            parent = entry.parent;
+        }
+
+        depth
+    };
+
+    entries
+        .iter_mut()
+        .for_each(|e| e.children.sort_unstable_by_key(|c| (depth(*c), *c)));
 }
 
 /// Returns an Iterator that gives all the children and the key
@@ -333,4 +355,32 @@ where
     fn consolidated_by(&self, key: K) -> Children<K> {
         (*self).consolidated(key)
     }
+}
+
+#[test]
+fn check_depth_order() {
+    let mut builder = ConsolidatedMapBuilder::new();
+
+    builder.insert(3usize, 2);
+    builder.insert(5, 4);
+    builder.insert(8, 6);
+    builder.insert(8, 7);
+    builder.insert(9, 5);
+    builder.insert(9, 8);
+
+    let map = builder.build();
+
+    assert_eq!(vec![5, 8, 4, 6, 7], map.children(9).collect::<Vec<_>>());
+    assert_eq!(vec![2], map.children(3).collect::<Vec<_>>());
+
+    /*
+        9
+            8
+                7
+                6
+            5
+                4
+        3
+            2
+    */
 }
